@@ -7,6 +7,25 @@ from authentication.serializers import VerifyOtpSerializer, ResendOtpSerializer
 import random
 import datetime
 from django.utils import timezone
+import authentication.utils.helpers as h
+
+
+def handle_send_sms_message_result(result):
+    is_rejected = result.get('is_rejected')
+    if is_rejected:
+        error = result.get('error')
+        return Response({"detail":error}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    is_resolved = result.get('is_resolved')
+    if is_resolved:
+        response = result.get('response')
+        return Response(response.json(), response.status_code)
+    
+    is_successful = result.get('is_successful')
+    if is_successful:
+        return Response({"detail":"OTP sent successfuly"}, status=status.HTTP_200_OK)
+
+
 
 @api_view(['GET', 'POST'])
 def user_list(request):
@@ -91,21 +110,41 @@ def resend_otp(request):
             email = serializer.validated_data.get('email')
 
             user = User.objects.get(email=email)
+            message = f"{user.otp} is your code. Please do not share it with anyone."
+            h.send_sms_message(
+                phone_number=user.phone_number, 
+                message=message)
 
+            return Response({"detail":"OTP regenerated successfully."})
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response({"detail":"invalid request method"}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+
+@api_view(['POST'])
+def generate_otp(request):
+    if request.method == 'POST':
+
+        serializer = ResendOtpSerializer(data=request.data)
+
+        if serializer.is_valid():
+            email = serializer.validated_data.get('email')
+
+            user = User.objects.get(email=email)
             user.otp = str(random.randint(100000, 999999))
             user.otp_expiry = timezone.now() + datetime.timedelta(minutes=3)
             user.save()
 
             # send otp
-
+            message = f"{user.otp} is your code. Please do not share it with anyone."
+            result = h.send_sms_message(
+                phone_number=user.phone_number, 
+                message=message)
             
-            return Response({"detail":"OTP regenerated successfully."})
+            return handle_send_sms_message_result(result)
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     return Response({"detail":"invalid request method"}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
-        
-
-
-
-        
+                
     
